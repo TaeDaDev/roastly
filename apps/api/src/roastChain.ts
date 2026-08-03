@@ -13,3 +13,11 @@ export const llm = new ChatAnthropic({
 });
 
 export const roastingModel = llm.withStructuredOutput(RoastResult);
+
+export async function roastCode(code: string): Promise<RoastResult> {
+  const roastResult = await roastingModel.invoke(
+    `Roast the following code and provide a score from 0 to 100, where 0 is the worst and 100 is the best. Also provide a list of findings with severity, file, line, issue, roastLine, fix, and codeSuggestion. Code: ${code}`,
+  );
+
+  return roastResult;
+}
