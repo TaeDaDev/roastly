@@ -17,8 +17,28 @@
         "command": "roastly.roastFile",
         "title": "Roast File",
         "category": "Roastly"
+      },
+      {
+        "command": "roastly.roastSelection",
+        "title": "Roast Selection",
+        "category": "Roastly"
       }
-    ]
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "roastly.roastSelection",
+          "when": "editorHasSelection",
+          "group": "navigation"
+        }
+      ],
+      "editor/title/context": [
+        {
+          "command": "roastly.roastFile",
+          "group": "navigation"
+        }
+      ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",

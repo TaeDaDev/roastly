@@ -13,7 +13,13 @@ suite('Extension Test Suite', () => {
 		assert.strictEqual(-1, [1, 2, 3].indexOf(0));
 	});
 
+	// added this after burning a while trying to debug "nothing happens" in the
+	// GUI - turned out to be a stale compile + wrong debug window, not a real
+	// bug. this runs the actual command end to end (needs the API running on
+	// localhost:3000) and gets a real pass/fail in the terminal instead of me
+	// squinting at a notification toast that may or may not have popped up
 	test('roastFile command runs without throwing', async function () {
+		// default mocha timeout is too short for a real network call to Claude
 		this.timeout(20000);
 		const doc = await vscode.workspace.openTextDocument({
 			content: 'function add(a, b) { return a + b }',
