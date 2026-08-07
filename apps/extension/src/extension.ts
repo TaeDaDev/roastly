@@ -24,6 +24,7 @@ function severityToVsCode(
   }
 }
 
+
 // turns a finding's line number into a squiggle range for the whole line.
 // two gotchas here: finding.line is optional (Claude doesn't always give one,
 // falls back to line 0), and VS Code lines are 0-indexed while the line number
@@ -37,6 +38,53 @@ function findingToRange(finding: Finding): vscode.Range {
     new vscode.Position(line, 1000),
   );
 }
+
+// vscode.Diagnostic only holds a message + severity, not the full Finding -
+// so if I want the CodeActionProvider below to get at fix/codeSuggestion
+// later, I need to stash the actual findings somewhere keyed by the file
+// they came from. uri.toString() as the key since Uri objects themselves
+// aren't reliable as Map keys (reference equality, not value equality)
+const findingsByUri = new Map<string, Finding[]>();
+
+// this is what powers the little lightbulb / Cmd+. "Fix It" menu. VS Code
+// calls provideCodeActions whenever the cursor/selection is near a
+// diagnostic, passing in the range it cares about - I look up whatever
+// findings I stored for this file and hand back one quick-fix action per
+// finding that both has a codeSuggestion AND overlaps that range
+class RoastlyCodeActionProvider implements vscode.CodeActionProvider {
+  provideCodeActions(
+    document: vscode.TextDocument,
+    range: vscode.Range,
+  ): vscode.CodeAction[] {
+    const findings = findingsByUri.get(document.uri.toString()) ?? [];
+
+    return findings
+      .filter((finding) => {
+        const findingRange = findingToRange(finding);
+        // careful: findingRange here is NOT the same as the outer `range`
+        // param - naming these the same thing once shadowed the outer one
+        // and silently broke the filter (always true, comparing to itself)
+        return !!finding.codeSuggestion && !!findingRange.intersection(range);
+      })
+      .map((finding) => {
+        const action = new vscode.CodeAction(
+          `Quick Roast: ${finding.fix}`,
+          vscode.CodeActionKind.QuickFix,
+        );
+        // the actual "fix" - a WorkspaceEdit that swaps the flagged range
+        // for Claude's suggested replacement. this is what runs when the
+        // user actually clicks the quick fix, not just displays it
+        action.edit = new vscode.WorkspaceEdit();
+        action.edit.replace(
+          document.uri,
+          findingToRange(finding),
+          finding.codeSuggestion || "",
+        );
+        return action;
+      });
+  }
+}
+
 
 export async function roastText(text: string, uri: vscode.Uri, roastCollection: vscode.DiagnosticCollection) {
   const { RoastResult } = await import("@roastly/shared-types");
@@ -54,6 +102,7 @@ export async function roastText(text: string, uri: vscode.Uri, roastCollection: 
       // from silently corrupting data on this end
       const result = RoastResult.parse(await response.json());
       vscode.window.showInformationMessage(result.roast);
+      findingsByUri.set(uri.toString(), result.findings);
 
       // turn every finding into a squiggle - this is what actually shows up
       // as inline warnings/errors in the editor gutter, separate from the
@@ -87,11 +136,6 @@ export function activate(context: vscode.ExtensionContext) {
   const disposable = vscode.commands.registerCommand(
     "roastly.roastFile",
     async () => {
-      // dynamic import (not a static one) for the same CJS/ESM reason as the
-      // type import up top, except this time we actually need the runtime value
-      // (the Zod schema), not just the type, so a type-only import won't cut it
-      const { RoastResult } = await import("@roastly/shared-types");
-
       if (!vscode.window.activeTextEditor) {
         vscode.window.showInformationMessage("No active file to roast!");
         return;
@@ -102,14 +146,41 @@ export function activate(context: vscode.ExtensionContext) {
       // hardcoded to localhost for now since I'm still running the API locally -
       // this needs to point at a real deployed URL before this ever ships to
       // anyone else, plus some kind of auth so randoms can't hit my Claude bill
-      
+      await roastText(code, vscode.window.activeTextEditor.document.uri, roastCollection);
     },
   );
 
-  // pushing into subscriptions means VS Code disposes both of these
+  // separate command, separate disposable - was accidentally nesting this
+  // inside roastFile's registerCommand call as a third arg earlier, which
+  // "worked" by accident (JS still evaluates it as an expression) but never
+  // got tracked in subscriptions, so it would've leaked on deactivate
+  const selectionDisposable = vscode.commands.registerCommand(
+    "roastly.roastSelection",
+    async () => {
+      if (!vscode.window.activeTextEditor) {
+        vscode.window.showInformationMessage("No active file to roast!");
+        return;
+      }
+
+      const selection = vscode.window.activeTextEditor.selection;
+      const code = vscode.window.activeTextEditor.document.getText(selection);
+
+      await roastText(code, vscode.window.activeTextEditor.document.uri, roastCollection);
+    },
+  );
+
+  const codeActionDisposable = vscode.languages.registerCodeActionsProvider(
+    { scheme: "file" }, //applies to any file on disk, not just a specific language
+    new RoastlyCodeActionProvider(),
+    // narrowing to just QuickFix kinds - without this VS Code doesn't know
+    // what category these actions fall into for filtering/sorting purposes
+    {providedCodeActionKinds: [vscode.CodeActionKind.QuickFix]}
+  );
+
+  // pushing into subscriptions means VS Code disposes all four of these
   // automatically when the extension deactivates - don't need to manually
   // clean up in deactivate() below
-  context.subscriptions.push(disposable, roastCollection);
+  context.subscriptions.push(disposable, selectionDisposable, roastCollection, codeActionDisposable);
 }
 
 export function deactivate() {}
