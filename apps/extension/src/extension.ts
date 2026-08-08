@@ -86,12 +86,13 @@ class RoastlyCodeActionProvider implements vscode.CodeActionProvider {
 }
 
 
-export async function roastText(text: string, uri: vscode.Uri, roastCollection: vscode.DiagnosticCollection) {
+export async function roastText(text: string, uri: vscode.Uri, roastCollection: vscode.DiagnosticCollection, apiKey: string) {
   const { RoastResult } = await import("@roastly/shared-types");
   const response = await fetch("http://localhost:3000/roast/code", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "x-roastly-Key": apiKey,
         },
         body: JSON.stringify({ code: text }),
       });
@@ -146,7 +147,12 @@ export function activate(context: vscode.ExtensionContext) {
       // hardcoded to localhost for now since I'm still running the API locally -
       // this needs to point at a real deployed URL before this ever ships to
       // anyone else, plus some kind of auth so randoms can't hit my Claude bill
-      await roastText(code, vscode.window.activeTextEditor.document.uri, roastCollection);
+      const apiKey = await context.secrets.get("roastlyApiKey");
+      if (!apiKey) {
+        vscode.window.showInformationMessage("No Roastly API key set! Use the 'Set API Key' command first.");
+        return;
+      }
+      await roastText(code, vscode.window.activeTextEditor.document.uri, roastCollection, apiKey);
     },
   );
 
@@ -165,7 +171,12 @@ export function activate(context: vscode.ExtensionContext) {
       const selection = vscode.window.activeTextEditor.selection;
       const code = vscode.window.activeTextEditor.document.getText(selection);
 
-      await roastText(code, vscode.window.activeTextEditor.document.uri, roastCollection);
+      const apiKey = await context.secrets.get("roastlyApiKey");
+      if (!apiKey) {
+        vscode.window.showInformationMessage("No Roastly API key set! Use the 'Set API Key' command first.");
+        return;
+      }
+      await roastText(code, vscode.window.activeTextEditor.document.uri, roastCollection, apiKey);
     },
   );
 
@@ -177,10 +188,26 @@ export function activate(context: vscode.ExtensionContext) {
     {providedCodeActionKinds: [vscode.CodeActionKind.QuickFix]}
   );
 
-  // pushing into subscriptions means VS Code disposes all four of these
+  const setApiKeyDisposable = vscode.commands.registerCommand(
+  "roastly.setApiKey",
+  async () => {
+    const key = await vscode.window.showInputBox({
+      prompt: "Enter your Roastly API key",
+      password: true,
+    });
+    if (!key) {
+      return;
+    }
+    await context.secrets.store("roastlyApiKey", key);
+    vscode.window.showInformationMessage("Roastly API key saved.");
+  },
+);
+
+
+  // pushing into subscriptions means VS Code disposes all five of these
   // automatically when the extension deactivates - don't need to manually
   // clean up in deactivate() below
-  context.subscriptions.push(disposable, selectionDisposable, roastCollection, codeActionDisposable);
+  context.subscriptions.push(disposable, selectionDisposable, roastCollection, codeActionDisposable, setApiKeyDisposable);
 }
 
 export function deactivate() {}

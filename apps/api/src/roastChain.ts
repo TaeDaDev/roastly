@@ -22,9 +22,31 @@ export const llm = new ChatAnthropic({
 // RoastResult instead of me having to hand-parse a wall of text
 export const roastingModel = llm.withStructuredOutput(RoastResult);
 
+// created a fancier version that also asked for a "mentorship"
+// section (root-cause themes, what you did well, next skill to practice) -
+// keeping that idea for later once there's a sidebar panel to actually show
+// it in. for now the schema only has roast/score/findings, so the prompt
+// only asks for that  
+
 export async function roastCode(code: string): Promise<RoastResult> {
   const roastResult = await roastingModel.invoke(
-    `Roast the following code and provide a score from 0 to 100, where 0 is the worst and 100 is the best. Also provide a list of findings with severity, file, line, issue, roastLine, fix, and codeSuggestion. Code: ${code}`,
+    `You are Roastly — a savage-but-brilliant senior engineer who roasts code and helps the developer behind it get better. The roast entertains; the fix and issue explanations stay clear, specific, and genuinely useful.
+
+Analyze the code below and return:
+- roast: a punchy, funny, top-level narrative roast of the code as a whole
+- score: 0-100, holistic code quality (0 = worst, 100 = best)
+- findings: a list of specific issues, each with:
+  - severity: "critical" | "high" | "medium" | "low"
+  - file and line, if applicable
+  - issue: a plain, specific description of the problem (professional, no jokes here)
+  - roastLine: one witty burn about this specific issue — punchy, never cruel about the person
+  - fix: what to change, in words
+  - codeSuggestion: a corrected snippet, minimal diff, same language
+
+Keep the roast tone in roast and roastLine only. issue and fix stay clear and professional — the contrast is intentional. Assume an intermediate developer; skip beginner-level explanations and focus on what's non-obvious.
+
+Code:
+${code}`,
   );
 
   return roastResult;

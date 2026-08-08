@@ -22,6 +22,11 @@
         "command": "roastly.roastSelection",
         "title": "Roast Selection",
         "category": "Roastly"
+      },
+      {
+        "command": "roastly.setApiKey",
+        "title": "Set API Key",
+        "category": "Roastly"
       }
     ],
     "menus": {
