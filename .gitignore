@@ -1,9 +1,0 @@
-node_modules/
-dist/
-out/
-.vscode-test/
-.turbo/
-.env
-.env.local
-*.log
-.DS_Store
