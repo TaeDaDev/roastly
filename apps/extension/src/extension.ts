@@ -3,7 +3,9 @@ import * as vscode from "vscode";
 // shared-types is an ESM package but this extension is CommonJS, and a real
 // (value) import here would blow up with an ERR_REQUIRE_ESM style error.
 // resolution-mode is required by nodenext when a CJS file type-imports from ESM.
-import type { Finding } from "@roastly/shared-types" with { "resolution-mode": "import" };
+import type { Finding, RoastResult } from "@roastly/shared-types" with {
+  "resolution-mode": "import",
+};
 
 // maps our own severity strings (from the Zod schema in shared-types) to
 // whatever VS Code's diagnostic squiggles use. we have 4 severities and VS Code
@@ -24,6 +26,154 @@ function severityToVsCode(
   }
 }
 
+// wraps whatever content HTML in a consistent styled shell. using VS Code's
+// own theme CSS variables (--vscode-*) instead of hardcoded colors, so this
+// automatically matches whatever theme the user has - light, dark, high
+// contrast, whatever - rather than looking broken in half of them
+function wrapHtml(content: string): string {
+  return `
+    <html>
+      <head>
+        <style>
+          body {
+            font-family: var(--vscode-font-family);
+            color: var(--vscode-foreground);
+            padding: 12px;
+            line-height: 1.5;
+          }
+          .empty {
+            color: var(--vscode-descriptionForeground);
+            font-style: italic;
+          }
+          .score-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 12px;
+          }
+          .score-circle {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 52px;
+            height: 52px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #ff6b35, #f7931e);
+            color: white;
+            font-weight: 700;
+            font-size: 18px;
+            flex-shrink: 0;
+          }
+          .score-label {
+            color: var(--vscode-descriptionForeground);
+            font-size: 12px;
+          }
+          .roast {
+            font-style: italic;
+            border-left: 3px solid #ff6b35;
+            padding-left: 10px;
+            margin-bottom: 16px;
+          }
+          .findings {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+          }
+          .finding {
+            background: var(--vscode-editorWidget-background);
+            border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+            border-radius: 6px;
+            padding: 10px 12px;
+          }
+          .finding-header {
+            margin-bottom: 6px;
+          }
+          .badge {
+            display: inline-block;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            padding: 2px 8px;
+            border-radius: 10px;
+          }
+          .badge-critical { background: #f14c4c; color: white; }
+          .badge-high { background: #ff6b35; color: white; }
+          .badge-medium { background: #f7931e; color: white; }
+          .badge-low { background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); }
+          .issue {
+            margin: 4px 0;
+          }
+          .roast-line {
+            color: var(--vscode-descriptionForeground);
+            font-style: italic;
+            margin: 4px 0;
+          }
+          .fix {
+            margin: 4px 0;
+            font-size: 13px;
+          }
+          .fix-label {
+            font-weight: 700;
+            color: #ff6b35;
+          }
+        </style>
+      </head>
+      <body>${content}</body>
+    </html>
+  `;
+}
+
+// the sidebar panel VS Code shows when the Roastly Activity Bar icon (or the
+// editor-title flame button) is clicked. resolveWebviewView only fires once,
+// the first time VS Code actually creates the view - that's why I stash the
+// webviewView on `this.view`, so showRoast() can update it later on demand
+// instead of only being able to set the HTML once at creation time
+class RoastlyViewProvider implements vscode.WebviewViewProvider {
+  private view?: vscode.WebviewView;
+
+  resolveWebviewView(webviewView: vscode.WebviewView) {
+    this.view = webviewView;
+    // no scripts needed yet - this is just static HTML rendering roast data,
+    // not an interactive webview. enabling scripts unnecessarily would be a
+    // pointless attack surface for something that doesn't need JS at all
+    webviewView.webview.options = { enableScripts: false };
+    webviewView.webview.html = wrapHtml(`<p class="empty">No roast yet. Run <strong>Roastly: Roast File</strong> to get started.</p>`);
+  }
+
+  // called from roastText() every time a roast completes - guard against
+  // this running before resolveWebviewView ever fires (e.g. if a roast
+  // somehow completed before the user ever opened the panel once)
+  showRoast(result: RoastResult) {
+    if (!this.view) {
+      return;
+    }
+
+    const findingsHtml = result.findings
+      .map(
+        (finding) => `
+        <div class="finding severity-${finding.severity}">
+          <div class="finding-header">
+            <span class="badge badge-${finding.severity}">${finding.severity}</span>
+          </div>
+          <p class="issue">${finding.issue}</p>
+          <p class="roast-line">"${finding.roastLine}"</p>
+          <p class="fix"><span class="fix-label">Fix:</span> ${finding.fix}</p>
+        </div>
+      `,
+      )
+      .join("");
+
+    this.view.webview.html = wrapHtml(`
+      <div class="score-row">
+        <div class="score-circle">${result.score}</div>
+        <div class="score-label">out of 100</div>
+      </div>
+      <p class="roast">${result.roast}</p>
+      <div class="findings">${findingsHtml}</div>
+    `);
+  }
+}
 
 // turns a finding's line number into a squiggle range for the whole line.
 // two gotchas here: finding.line is optional (Claude doesn't always give one,
@@ -85,42 +235,57 @@ class RoastlyCodeActionProvider implements vscode.CodeActionProvider {
   }
 }
 
-
-export async function roastText(text: string, uri: vscode.Uri, roastCollection: vscode.DiagnosticCollection, apiKey: string) {
+export async function roastText(
+  text: string,
+  uri: vscode.Uri,
+  roastCollection: vscode.DiagnosticCollection,
+  apiKey: string,
+  viewProvider?: RoastlyViewProvider,
+) {
   const { RoastResult } = await import("@roastly/shared-types");
-  const response = await fetch("http://localhost:3000/roast/code", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-roastly-Key": apiKey,
-        },
-        body: JSON.stringify({ code: text }),
-      });
+  const response = await fetch(
+    "https://roastly-production-2573.up.railway.app/roast/code",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-roastly-Key": apiKey,
+      },
+      body: JSON.stringify({ code: text }),
+    },
+  );
 
-      // .parse() both validates the API response at runtime AND gives me a
-      // properly typed result - don't trust the network, even though it's my
-      // own API right now, this is what stops a shape change on the backend
-      // from silently corrupting data on this end
-      const result = RoastResult.parse(await response.json());
-      vscode.window.showInformationMessage(result.roast);
-      findingsByUri.set(uri.toString(), result.findings);
+  // .parse() both validates the API response at runtime AND gives me a
+  // properly typed result - don't trust the network, even though it's my
+  // own API right now, this is what stops a shape change on the backend
+  // from silently corrupting data on this end
+  const result = RoastResult.parse(await response.json());
 
-      // turn every finding into a squiggle - this is what actually shows up
-      // as inline warnings/errors in the editor gutter, separate from the
-      // popup message above which is just the overall roast narrative
-      const diagnostics = result.findings.map(
-        (finding: Finding) =>
-          new vscode.Diagnostic(
-            findingToRange(finding),
-            finding.issue,
-            severityToVsCode(finding.severity),
-          ),
-      );
+  vscode.window.showInformationMessage(result.roast);
+  findingsByUri.set(uri.toString(), result.findings);
+  if (viewProvider) {
+    // auto-reveal the sidebar so the user actually sees the result
+    // without having to remember to click the flame icon themselves -
+    // matches how Claude/Copilot's own panels behave
 
-      roastCollection.set(
-        uri,
-        diagnostics,
-      );
+    await vscode.commands.executeCommand("workbench.view.extension.roastly");
+
+    viewProvider.showRoast(result);
+  }
+
+  // turn every finding into a squiggle - this is what actually shows up
+  // as inline warnings/errors in the editor gutter, separate from the
+  // popup message above which is just the overall roast narrative
+  const diagnostics = result.findings.map(
+    (finding: Finding) =>
+      new vscode.Diagnostic(
+        findingToRange(finding),
+        finding.issue,
+        severityToVsCode(finding.severity),
+      ),
+  );
+
+  roastCollection.set(uri, diagnostics);
 }
 
 // activate() runs once, the first time any of my commands actually gets invoked
@@ -144,15 +309,20 @@ export function activate(context: vscode.ExtensionContext) {
 
       const code = vscode.window.activeTextEditor.document.getText();
 
-      // hardcoded to localhost for now since I'm still running the API locally -
-      // this needs to point at a real deployed URL before this ever ships to
-      // anyone else, plus some kind of auth so randoms can't hit my Claude bill
       const apiKey = await context.secrets.get("roastlyApiKey");
       if (!apiKey) {
-        vscode.window.showInformationMessage("No Roastly API key set! Use the 'Set API Key' command first.");
+        vscode.window.showInformationMessage(
+          "No Roastly API key set! Use the 'Set API Key' command first.",
+        );
         return;
       }
-      await roastText(code, vscode.window.activeTextEditor.document.uri, roastCollection, apiKey);
+      await roastText(
+        code,
+        vscode.window.activeTextEditor.document.uri,
+        roastCollection,
+        apiKey,
+        roastlyViewProvider,
+      );
     },
   );
 
@@ -173,10 +343,18 @@ export function activate(context: vscode.ExtensionContext) {
 
       const apiKey = await context.secrets.get("roastlyApiKey");
       if (!apiKey) {
-        vscode.window.showInformationMessage("No Roastly API key set! Use the 'Set API Key' command first.");
+        vscode.window.showInformationMessage(
+          "No Roastly API key set! Use the 'Set API Key' command first.",
+        );
         return;
       }
-      await roastText(code, vscode.window.activeTextEditor.document.uri, roastCollection, apiKey);
+      await roastText(
+        code,
+        vscode.window.activeTextEditor.document.uri,
+        roastCollection,
+        apiKey,
+        roastlyViewProvider,
+      );
     },
   );
 
@@ -185,29 +363,57 @@ export function activate(context: vscode.ExtensionContext) {
     new RoastlyCodeActionProvider(),
     // narrowing to just QuickFix kinds - without this VS Code doesn't know
     // what category these actions fall into for filtering/sorting purposes
-    {providedCodeActionKinds: [vscode.CodeActionKind.QuickFix]}
+    { providedCodeActionKinds: [vscode.CodeActionKind.QuickFix] },
   );
 
   const setApiKeyDisposable = vscode.commands.registerCommand(
-  "roastly.setApiKey",
-  async () => {
-    const key = await vscode.window.showInputBox({
-      prompt: "Enter your Roastly API key",
-      password: true,
-    });
-    if (!key) {
-      return;
-    }
-    await context.secrets.store("roastlyApiKey", key);
-    vscode.window.showInformationMessage("Roastly API key saved.");
-  },
-);
+    "roastly.setApiKey",
+    async () => {
+      const key = await vscode.window.showInputBox({
+        prompt: "Enter your Roastly API key",
+        password: true,
+      });
+      if (!key) {
+        return;
+      }
+      await context.secrets.store("roastlyApiKey", key);
+      vscode.window.showInformationMessage("Roastly API key saved.");
+    },
+  );
 
+  // the editor-title flame button - just reveals the sidebar, doesn't roast
+  // anything itself. "workbench.view.extension.roastly" is a built-in VS Code
+  // command for showing a view container; "roastly" has to match the id I
+  // gave the viewsContainers entry in package.json, not the view id itself
+  const openPanelDisposable = vscode.commands.registerCommand(
+    "roastly.openPanel",
+    async () => {
+      await vscode.commands.executeCommand("workbench.view.extension.roastly");
+    },
+  );
 
-  // pushing into subscriptions means VS Code disposes all five of these
+  // this exact instance is what needs to get passed into roastText() below -
+  // learned the hard way that `new RoastlyViewProvider()` at the call site
+  // creates a disconnected, throwaway instance that VS Code never calls
+  // resolveWebviewView() on, so its showRoast() would silently no-op forever
+  const roastlyViewProvider = new RoastlyViewProvider();
+  const viewDisposable = vscode.window.registerWebviewViewProvider(
+    "roastly.roastView",
+    roastlyViewProvider,
+  );
+
+  // pushing into subscriptions means VS Code disposes all seven of these
   // automatically when the extension deactivates - don't need to manually
   // clean up in deactivate() below
-  context.subscriptions.push(disposable, selectionDisposable, roastCollection, codeActionDisposable, setApiKeyDisposable);
+  context.subscriptions.push(
+    disposable,
+    selectionDisposable,
+    roastCollection,
+    codeActionDisposable,
+    setApiKeyDisposable,
+    viewDisposable,
+    openPanelDisposable,
+  );
 }
 
 export function deactivate() {}

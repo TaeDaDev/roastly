@@ -3,6 +3,7 @@
   "displayName": "Roastly",
   "description": "AI roasts. Real impact. Brutal honesty about your code, said with fire.",
   "version": "0.0.1",
+  "icon": "media/icon.png",
   "engines": {
     "vscode": "^1.125.0"
   },
@@ -27,6 +28,12 @@
         "command": "roastly.setApiKey",
         "title": "Set API Key",
         "category": "Roastly"
+      },
+      {
+        "command": "roastly.openPanel",
+        "title": "Open Roastly Panel",
+        "category": "Roastly",
+        "icon": "$(flame)"
       }
     ],
     "menus": {
@@ -42,32 +49,59 @@
           "command": "roastly.roastFile",
           "group": "navigation"
         }
+      ],
+      "editor/title": [
+        {
+          "command": "roastly.openPanel",
+          "group": "navigation",
+          "when": "editorTextFocus"
+        }
       ]
+    },
+    "viewsContainers": {
+  "activitybar": [
+    {
+      "id": "roastly",
+      "title": "Roastly",
+      "icon": "media/flame.svg"
     }
-  },
-  "scripts": {
-    "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
-    "pretest": "npm run compile && npm run lint",
-    "lint": "eslint src",
-    "test": "vscode-test"
-  },
-  "dependencies": {
-    "@roastly/shared-types": "^1.0.0"
-  },
-  "devDependencies": {
-    "@types/mocha": "^10.0.10",
-    "@types/node": "24.x",
-    "@types/vscode": "^1.125.0",
-    "@vscode/test-cli": "^0.0.15",
-    "@vscode/test-electron": "^3.0.0",
-    "eslint": "^10.5.0",
-    "typescript": "^6.0.3",
-    "typescript-eslint": "^8.61.1"
-  },
-  "overrides": {
-    "diff": "^8.0.4",
-    "serialize-javascript": "^7.0.6"
+  ]
+},
+"views": {
+  "roastly": [
+    {
+      "id": "roastly.roastView",
+      "name": "Roast Results",
+      "type": "webview"
+    }
+  ]
+}
+
   }
+,
+"scripts": {
+  "vscode:prepublish": "npm run compile",
+  "compile": "tsc -p ./",
+  "watch": "tsc -watch -p ./",
+  "pretest": "npm run compile && npm run lint",
+  "lint": "eslint src",
+  "test": "vscode-test"
+},
+"dependencies": {
+  "@roastly/shared-types": "^1.0.0"
+},
+"devDependencies": {
+  "@types/mocha": "^10.0.10",
+  "@types/node": "24.x",
+  "@types/vscode": "^1.125.0",
+  "@vscode/test-cli": "^0.0.15",
+  "@vscode/test-electron": "^3.0.0",
+  "eslint": "^10.5.0",
+  "typescript": "^6.0.3",
+  "typescript-eslint": "^8.61.1"
+},
+"overrides": {
+  "diff": "^8.0.4",
+  "serialize-javascript": "^7.0.6"
+}
 }
