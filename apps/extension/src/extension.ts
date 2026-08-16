@@ -138,7 +138,9 @@ class RoastlyViewProvider implements vscode.WebviewViewProvider {
     // not an interactive webview. enabling scripts unnecessarily would be a
     // pointless attack surface for something that doesn't need JS at all
     webviewView.webview.options = { enableScripts: false };
-    webviewView.webview.html = wrapHtml(`<p class="empty">No roast yet. Run <strong>Roastly: Roast File</strong> to get started.</p>`);
+    webviewView.webview.html = wrapHtml(
+      `<p class="empty">No roast yet. Run <strong>Roastly: Roast File</strong> to get started.</p>`,
+    );
   }
 
   // called from roastText() every time a roast completes - guard against
@@ -316,12 +318,22 @@ export function activate(context: vscode.ExtensionContext) {
         );
         return;
       }
-      await roastText(
-        code,
-        vscode.window.activeTextEditor.document.uri,
-        roastCollection,
-        apiKey,
-        roastlyViewProvider,
+      const editor = vscode.window.activeTextEditor;
+
+      await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: "Roastly is roasting your code...",
+        },
+        async () => {
+          await roastText(
+            code,
+            editor.document.uri,
+            roastCollection,
+            apiKey,
+            roastlyViewProvider,
+          );
+        },
       );
     },
   );
@@ -348,12 +360,21 @@ export function activate(context: vscode.ExtensionContext) {
         );
         return;
       }
-      await roastText(
-        code,
-        vscode.window.activeTextEditor.document.uri,
-        roastCollection,
-        apiKey,
-        roastlyViewProvider,
+      const editor = vscode.window.activeTextEditor;
+      await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: "Roastly is roasting your code...",
+        },
+        async () => {
+          await roastText(
+            code,
+            editor.document.uri,
+            roastCollection,
+            apiKey,
+            roastlyViewProvider,
+          );
+        },
       );
     },
   );
